@@ -133,7 +133,7 @@ class MaxBridge:
             except Exception:
                 log.exception("Error forwarding message from %s", phone)
 
-        @client.on_reaction_change()
+        @client.on_reaction_change
         async def on_reaction(message_id: str, chat_id: int, reaction_info: ReactionInfo) -> None:
             try:
                 await self._forward_reaction_to_tg(phone, chat_id, message_id, reaction_info)
