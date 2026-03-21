@@ -1,0 +1,33 @@
+work_dir: .cache          # directory for Max session DBs ({work_dir}/{phone_digits}/session.db)
+debug: false              # true → DEBUG logging for max2tg.* and pymax.*
+
+telegram:
+  bot_token: "${TG_BOT_TOKEN}"
+  whitelist:
+    - 35243507            # Telegram user_ids allowed to interact with the bot
+
+  # ── Webhook (optional) ────────────────────────────────────────────────────
+  # If omitted (or TELEGRAM_WEBHOOK_URL not set), polling is used instead.
+  #
+  # webhook_url: "${TELEGRAM_WEBHOOK_URL}"   # public base URL, e.g. https://bot.example.com
+  # webhook_path: /webhook                   # default: /webhook
+  # webhook_host: "0.0.0.0"                  # default: 0.0.0.0
+  # webhook_port: 8080                        # default: 8080
+  #
+  # Secret token is derived from bot_token automatically (HMAC-SHA256).
+  # Override if needed:
+  # webhook_secret: "${TELEGRAM_WEBHOOK_SECRET}"
+
+# ── Max sessions ──────────────────────────────────────────────────────────────
+# Sessions can also be added at runtime via the /login bot command.
+# Tokens are stored in {work_dir}/{phone_digits}/session.db after first login.
+sessions:
+  - phone: "+79001234567"
+    name: "Alice"
+    telegram_id: 35243507   # Telegram user_id that owns this Max account
+    token: "${MAX_TOKEN_1}" # optional: pre-set auth token (saved by pymax after login)
+
+  - phone: "+79009876543"
+    name: "Bob"
+    telegram_id: 35243507
+    token: "${MAX_TOKEN_2}"

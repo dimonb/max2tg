@@ -5,6 +5,12 @@ Read this before making changes.
 
 ---
 
+## Working rules
+
+- **Do NOT commit or push unless the user explicitly says so** (e.g. "commit", "push", "commit and push").
+
+---
+
 ## What this project does
 
 Bridges **Max messenger** (Russian messenger, formerly ICQ / Mail.ru Agent) with **Telegram**.

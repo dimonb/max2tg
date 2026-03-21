@@ -90,18 +90,27 @@ async def _run_webhook(bot: Bot, dp: Dispatcher, webhook_url: str, tg_cfg: dict)
     from aiohttp import web
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-    # Bot token in the path makes the URL unguessable — no extra secret needed.
-    token = bot.token
-    path = tg_cfg.get("webhook_path", f"/webhook/{token}")
+    path = tg_cfg.get("webhook_path", "/webhook")
     host = tg_cfg.get("webhook_host", "0.0.0.0")
     port = int(tg_cfg.get("webhook_port", 8080))
 
+    # Secret token: Telegram sends it in X-Telegram-Bot-Api-Secret-Token header,
+    # aiogram's SimpleRequestHandler verifies it automatically.
+    # Derived from bot token via HMAC-SHA256 truncated to 32 hex chars (valid: A-Z a-z 0-9 _ -).
+    import hashlib, hmac
+    _derived = hmac.new(bot.token.encode(), b"webhook-secret", hashlib.sha256).hexdigest()[:32]
+    secret = (
+        os.environ.get("TELEGRAM_WEBHOOK_SECRET")
+        or tg_cfg.get("webhook_secret")
+        or _derived
+    )
+
     full_url = webhook_url.rstrip("/") + path
-    await bot.set_webhook(url=full_url, drop_pending_updates=False)
+    await bot.set_webhook(url=full_url, secret_token=secret, drop_pending_updates=False)
     log.info("Webhook set to %s (listening on %s:%d)", full_url, host, port)
 
     app = web.Application()
-    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=path)
+    SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(app, path=path)
     setup_application(app, dp, bot=bot)
 
     runner = web.AppRunner(app)
