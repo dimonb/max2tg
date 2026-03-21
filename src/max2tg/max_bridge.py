@@ -91,6 +91,14 @@ class MaxBridge:
     # ── run loop ──────────────────────────────────────────────────────────────
 
     async def _run_client(self, phone: str, client: SocketMaxClient) -> None:
+        if client._token is None:
+            log.warning(
+                "No auth token for %s — not starting client automatically. "
+                "Use /login %s to authenticate via Telegram.",
+                phone, phone,
+            )
+            return
+
         @client.on_message()
         async def on_msg(msg: Message) -> None:
             try:
