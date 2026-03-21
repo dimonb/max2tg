@@ -388,6 +388,23 @@ class MaxBridge:
         """Strip Unicode variation selectors so the emoji matches Telegram's reaction list."""
         return emoji.translate(self._VARIATION_SELECTORS)
 
+    @staticmethod
+    def _to_max_emoji(emoji: str) -> str:
+        """Normalize TG emoji to Max reaction format.
+
+        TG strips U+FE0F variation selectors from reactions; Max requires them
+        for legacy "text-default" emoji (code points below U+1F000).
+        """
+        if not emoji:
+            return emoji
+        # Already has variation selector or is a modern emoji (U+1F000+) — leave as-is
+        if "\ufe0f" in emoji or "\ufe0e" in emoji:
+            return emoji
+        first = ord(emoji[0])
+        if first < 0x1F000:
+            return emoji + "\ufe0f"
+        return emoji
+
     async def _forward_reaction_to_tg(
         self, phone: str, max_chat_id: int, max_message_id_str: str, reaction_info: ReactionInfo
     ) -> None:
@@ -535,7 +552,7 @@ class MaxBridge:
             if not await self._wait_ready(phone):
                 return
             if emoji:
-                await client.add_reaction(max_chat_id, max_message_id, emoji)
+                await client.add_reaction(max_chat_id, max_message_id, self._to_max_emoji(emoji))
             else:
                 await client.remove_reaction(max_chat_id, max_message_id)
 
