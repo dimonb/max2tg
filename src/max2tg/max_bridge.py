@@ -65,9 +65,18 @@ class MaxBridge:
 
     def _make_client(self, s: dict) -> SocketMaxClient:
         import os
+        import sqlite3
         digits = s["phone"].lstrip("+")
         work_dir = os.path.join(self._work_dir, digits)
         os.makedirs(work_dir, exist_ok=True)
+        db_path = os.path.join(work_dir, "session.db")
+        if os.path.exists(db_path):
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    conn.execute("PRAGMA integrity_check")
+            except sqlite3.DatabaseError:
+                log.warning("Corrupt session db at %s — removing and starting fresh", db_path)
+                os.remove(db_path)
         client = SocketMaxClient(
             phone=s["phone"],
             token=s.get("token"),
