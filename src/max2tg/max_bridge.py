@@ -535,9 +535,9 @@ class MaxBridge:
             if not await self._wait_ready(phone):
                 return
             if emoji:
-                await client.add_reaction(max_chat_id, str(max_message_id), emoji)
+                await client.add_reaction(max_chat_id, max_message_id, emoji)
             else:
-                await client.remove_reaction(max_chat_id, str(max_message_id))
+                await client.remove_reaction(max_chat_id, max_message_id)
 
     def active_phones(self) -> list[str]:
         """Return phones of currently connected clients."""
