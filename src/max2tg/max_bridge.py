@@ -76,7 +76,10 @@ class MaxBridge:
                     conn.execute("PRAGMA integrity_check")
             except sqlite3.DatabaseError:
                 log.warning("Corrupt session db at %s — removing and starting fresh", db_path)
-                os.remove(db_path)
+                for suffix in ("", "-wal", "-shm"):
+                    p = db_path + suffix
+                    if os.path.exists(p):
+                        os.remove(p)
         client = SocketMaxClient(
             phone=s["phone"],
             token=s.get("token"),
@@ -333,6 +336,10 @@ class MaxBridge:
             attach = Video(raw=video_bytes, url=f"https://x/{video_name}")
         elif file_bytes:
             attach = File(raw=file_bytes, url=f"https://x/{file_name}")
+
+        if not text and not attach:
+            log.debug("send_to_max: skipping — no text and no attachment")
+            return None
 
         sent = await client.send_message(
             text=text or "",
