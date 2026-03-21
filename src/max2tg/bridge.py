@@ -90,20 +90,18 @@ async def _run_webhook(bot: Bot, dp: Dispatcher, webhook_url: str, tg_cfg: dict)
     from aiohttp import web
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-    path = tg_cfg.get("webhook_path", "/webhook")
+    # Bot token in the path makes the URL unguessable — no extra secret needed.
+    token = bot.token
+    path = tg_cfg.get("webhook_path", f"/webhook/{token}")
     host = tg_cfg.get("webhook_host", "0.0.0.0")
     port = int(tg_cfg.get("webhook_port", 8080))
-    secret = tg_cfg.get("webhook_secret")
 
-    await bot.set_webhook(
-        url=webhook_url.rstrip("/") + path,
-        secret_token=secret,
-        drop_pending_updates=False,
-    )
-    log.info("Webhook set to %s%s on %s:%d", webhook_url, path, host, port)
+    full_url = webhook_url.rstrip("/") + path
+    await bot.set_webhook(url=full_url, drop_pending_updates=False)
+    log.info("Webhook set to %s (listening on %s:%d)", full_url, host, port)
 
     app = web.Application()
-    SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(app, path=path)
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=path)
     setup_application(app, dp, bot=bot)
 
     runner = web.AppRunner(app)
