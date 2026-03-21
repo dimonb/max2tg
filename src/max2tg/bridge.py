@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 import yaml
-from aiogram import Bot
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -58,16 +58,61 @@ async def main() -> None:
 
     await db.init_db()
 
+    # Merge sessions from config.yaml and tg.db (db takes precedence for duplicates)
+    db_sessions = await db.get_sessions()
+    sessions_map: dict[str, dict] = {s["phone"]: s for s in sessions}
+    for s in db_sessions:
+        if s["phone"] not in sessions_map:
+            sessions_map[s["phone"]] = s
+    sessions = list(sessions_map.values())
+
     bot = Bot(
         token=bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     max_bridge = MaxBridge(sessions=sessions, work_dir=work_dir, bot=bot)
-    dp = build_dispatcher(max_bridge, sessions, whitelist)
+    dp = build_dispatcher(max_bridge, sessions, whitelist, work_dir)
 
     await register_commands(bot)
     log.info("Starting bridge: %d Max sessions, whitelist=%s", len(sessions), whitelist)
 
+    webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL") or tg_cfg.get("webhook_url")
+
     async with asyncio.TaskGroup() as tg:
         tg.create_task(max_bridge.start(), name="max-bridge")
-        tg.create_task(dp.start_polling(bot, handle_signals=False), name="tg-polling")
+        if webhook_url:
+            tg.create_task(_run_webhook(bot, dp, webhook_url, tg_cfg), name="tg-webhook")
+        else:
+            tg.create_task(dp.start_polling(bot, handle_signals=False), name="tg-polling")
+
+
+async def _run_webhook(bot: Bot, dp: Dispatcher, webhook_url: str, tg_cfg: dict) -> None:
+    from aiohttp import web
+    from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
+    path = tg_cfg.get("webhook_path", "/webhook")
+    host = tg_cfg.get("webhook_host", "0.0.0.0")
+    port = int(tg_cfg.get("webhook_port", 8080))
+    secret = tg_cfg.get("webhook_secret")
+
+    await bot.set_webhook(
+        url=webhook_url.rstrip("/") + path,
+        secret_token=secret,
+        drop_pending_updates=False,
+    )
+    log.info("Webhook set to %s%s on %s:%d", webhook_url, path, host, port)
+
+    app = web.Application()
+    SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(app, path=path)
+    setup_application(app, dp, bot=bot)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+    await site.start()
+
+    try:
+        await asyncio.Event().wait()  # run forever
+    finally:
+        await runner.cleanup()
+        await bot.delete_webhook()

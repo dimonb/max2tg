@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_max
     ON messages(phone, max_chat_id, max_message_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    phone        TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    telegram_id  INTEGER NOT NULL,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
 """
 
 
@@ -145,6 +152,31 @@ async def get_tg_message_id(phone: str, max_chat_id: int, max_message_id: int) -
         )
         row = await cur.fetchone()
         return (row[0], row[1]) if row else None
+
+
+# ── sessions ──────────────────────────────────────────────────────────────────
+
+async def get_sessions() -> list[dict]:
+    """Return all sessions stored in the DB."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT phone, name, telegram_id FROM sessions")
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def upsert_session(phone: str, name: str, telegram_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO sessions(phone, name, telegram_id) VALUES (?, ?, ?)",
+            (phone, name, telegram_id),
+        )
+        await db.commit()
+
+
+async def delete_session(phone: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM sessions WHERE phone = ?", (phone,))
+        await db.commit()
 
 
 async def get_max_message_id(tg_chat_id: int, tg_message_id: int) -> tuple[int, int, str] | None:

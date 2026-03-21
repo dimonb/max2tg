@@ -24,6 +24,8 @@ BOT_COMMANDS = [
     BotCommand(command="pin",    description="Pin this group to a Max session: /pin <phone>"),
     BotCommand(command="unpin",  description="Remove pin from this group"),
     BotCommand(command="send",   description="Send a message by phone: /send <phone> <text>"),
+    BotCommand(command="login",  description="Add Max session: /login <phone> [name]"),
+    BotCommand(command="logout", description="Remove Max session: /logout <phone>"),
 ]
 
 
@@ -31,13 +33,19 @@ async def register_commands(bot: Bot) -> None:
     await bot.set_my_commands(BOT_COMMANDS)
 
 
-def build_dispatcher(max_bridge: "MaxBridge", sessions: list[dict], whitelist: list[int]) -> Dispatcher:
+def build_dispatcher(
+    max_bridge: "MaxBridge",
+    sessions: list[dict],
+    whitelist: list[int],
+    work_dir: str = ".cache",
+) -> Dispatcher:
     dp = Dispatcher()
 
-    # store context in router data (available in handlers via data kwarg)
     dp["max_bridge"] = max_bridge
     dp["sessions"] = {s["phone"]: s for s in sessions}
     dp["whitelist"] = set(whitelist)
+    dp["work_dir"] = work_dir
+    dp["pending_logins"] = {}   # user_id → {phone, name, temp_token, client}
 
     dp.include_router(router)
     return dp
@@ -70,6 +78,8 @@ This bot mirrors conversations between <b>Max messenger</b> and <b>Telegram foru
 /unpin — remove the link from this group
 /send &lt;phone&gt; &lt;text&gt; — find a Max user by phone and send them a message
   With multiple sessions: <code>/send &lt;session&gt; &lt;phone&gt; &lt;text&gt;</code>
+/login &lt;phone&gt; [name] — add a new Max session (sends OTP to phone)
+/logout &lt;phone&gt; — remove a Max session
 /start — show this message
 
 <b>Sending messages:</b>
@@ -238,6 +248,153 @@ async def cmd_send(
         reply += f"\nTopic: {topic_links[0]}"
     await message.reply(reply)
     log.info("Sent to %s via %s, max_chat_id=%d", contact_phone, phone, max_chat_id)
+
+
+# ── /login ────────────────────────────────────────────────────────────────────
+
+@router.message(Command("login"))
+async def cmd_login(
+    message: Message,
+    whitelist: set[int],
+    sessions: dict[str, dict],
+    max_bridge: "MaxBridge",
+    pending_logins: dict,
+    work_dir: str,
+) -> None:
+    if not _check_allowed(message, whitelist):
+        return
+
+    args = (message.text or "").split(maxsplit=2)
+    if len(args) < 2:
+        await message.reply("Usage: <code>/login &lt;phone&gt; [name]</code>\nExample: <code>/login +79001234567 Vasya</code>")
+        return
+
+    phone = args[1].strip()
+    name = args[2].strip() if len(args) > 2 else phone
+
+    if phone in sessions:
+        await message.reply(f"Session <code>{phone}</code> is already active.")
+        return
+
+    from .max_bridge import MaxBridge as _MB
+    from pymax import SocketMaxClient
+    from pymax.payloads import UserAgentPayload
+    import os
+
+    digits = phone.lstrip("+")
+    client_work_dir = os.path.join(work_dir, digits)
+    os.makedirs(client_work_dir, exist_ok=True)
+    client = SocketMaxClient(
+        phone=phone,
+        work_dir=client_work_dir,
+        headers=UserAgentPayload(device_type="DESKTOP"),
+    )
+
+    try:
+        await client.connect()
+        temp_token = await client.request_code(phone)
+    except Exception as e:
+        await client._cleanup_client()
+        await message.reply(f"❌ Failed to request code: {e}")
+        log.exception("Login request_code failed for %s", phone)
+        return
+
+    pending_logins[message.from_user.id] = {
+        "phone": phone,
+        "name": name,
+        "temp_token": temp_token,
+        "client": client,
+    }
+    log.info("Login initiated for %s by tg_user=%d", phone, message.from_user.id)
+    await message.reply(
+        f"📱 Code sent to <code>{phone}</code>.\n"
+        "Reply with the <b>6-digit code</b> from SMS.\n"
+        "Use /cancel to abort."
+    )
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, whitelist: set[int], pending_logins: dict) -> None:
+    if not _check_allowed(message, whitelist):
+        return
+    state = pending_logins.pop(message.from_user.id, None)
+    if not state:
+        await message.reply("Nothing to cancel.")
+        return
+    await state["client"]._cleanup_client()
+    await message.reply("✅ Login cancelled.")
+
+
+# ── /logout ────────────────────────────────────────────────────────────────────
+
+@router.message(Command("logout"))
+async def cmd_logout(
+    message: Message,
+    whitelist: set[int],
+    sessions: dict[str, dict],
+    max_bridge: "MaxBridge",
+) -> None:
+    if not _check_allowed(message, whitelist):
+        return
+
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2:
+        active = max_bridge.active_phones()
+        phones = "\n".join(f"  <code>{p}</code>" for p in active) or "  (none)"
+        await message.reply(f"Usage: <code>/logout &lt;phone&gt;</code>\n\nActive sessions:\n{phones}")
+        return
+
+    phone = args[1].strip()
+    if phone not in sessions:
+        await message.reply(f"Session <code>{phone}</code> not found.")
+        return
+
+    await max_bridge.remove_session(phone)
+    sessions.pop(phone, None)
+    await db.delete_session(phone)
+    log.info("Session %s removed by tg_user=%d", phone, message.from_user.id)
+    await message.reply(f"✅ Session <code>{phone}</code> removed.")
+
+
+# ── OTP code handler ──────────────────────────────────────────────────────────
+
+@router.message(F.text.regexp(r"^\d{6}$"))
+async def handle_otp_code(
+    message: Message,
+    whitelist: set[int],
+    sessions: dict[str, dict],
+    max_bridge: "MaxBridge",
+    pending_logins: dict,
+) -> None:
+    if not message.from_user:
+        return
+    state = pending_logins.get(message.from_user.id)
+    if not state:
+        return  # not a pending login — let other handlers deal with it
+
+    pending_logins.pop(message.from_user.id)
+    client = state["client"]
+    phone = state["phone"]
+    name = state["name"]
+    code = message.text.strip()
+
+    try:
+        await client.login_with_code(state["temp_token"], code, start=False)
+    except Exception as e:
+        await client._cleanup_client()
+        await message.reply(f"❌ Login failed: {e}")
+        log.exception("login_with_code failed for %s", phone)
+        return
+
+    await client._cleanup_client()
+
+    session = {"phone": phone, "name": name, "telegram_id": message.from_user.id}
+    await db.upsert_session(phone=phone, name=name, telegram_id=message.from_user.id)
+    sessions[phone] = session
+    await max_bridge.add_session(session)
+
+    log.info("Session %s added via bot by tg_user=%d", phone, message.from_user.id)
+    await message.reply(f"✅ Logged in as <code>{phone}</code> ({name}).\nMax messages will now be bridged.")
 
 
 # ── incoming TG messages → Max ────────────────────────────────────────────────

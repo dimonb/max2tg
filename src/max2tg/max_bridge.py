@@ -354,3 +354,24 @@ class MaxBridge:
     def active_phones(self) -> list[str]:
         """Return phones of currently connected clients."""
         return list(self._clients.keys())
+
+    async def add_session(self, session: dict) -> None:
+        """Dynamically start a new Max client for an already-authenticated session."""
+        phone = session["phone"]
+        if phone in self._clients:
+            log.warning("Session %s is already running", phone)
+            return
+        client = self._make_client(session)
+        self._clients[phone] = client
+        task = asyncio.create_task(
+            self._run_client(phone, client), name=f"max-{phone}"
+        )
+        self._tasks.append(task)
+        log.info("Started new session for %s", phone)
+
+    async def remove_session(self, phone: str) -> None:
+        """Stop and remove a Max client."""
+        client = self._clients.pop(phone, None)
+        if client:
+            await client.close()
+            log.info("Removed session for %s", phone)
