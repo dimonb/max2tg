@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: max2tg
+Version: 0.1.0
+Requires-Python: >=3.14
+Requires-Dist: maxapi-python @ git+https://github.com/dimonb/PyMax.git
+Requires-Dist: textual>=8.1.1
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: aiogram>=3.26
+Requires-Dist: aiosqlite>=0.21
+Requires-Dist: aiohttp>=3.9

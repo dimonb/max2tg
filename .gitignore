@@ -1,0 +1,8 @@
+token*.txt
+phone*.txt
+.cache
+.venv
+.mypy_cache
+.pytest_cache
+config.yaml
+__pycache__

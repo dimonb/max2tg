@@ -1,0 +1,3 @@
+[console_scripts]
+max2tg = max2tg.bridge:main
+max2tg-cli = max2tg.cli:main

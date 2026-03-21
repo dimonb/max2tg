@@ -1,0 +1,15 @@
+pyproject.toml
+src/max2tg/__init__.py
+src/max2tg/__main__.py
+src/max2tg/cli.py
+src/max2tg/client.py
+src/max2tg/db.py
+src/max2tg/max_bridge.py
+src/max2tg/pymax_patches.py
+src/max2tg/register.py
+src/max2tg.egg-info/PKG-INFO
+src/max2tg.egg-info/SOURCES.txt
+src/max2tg.egg-info/dependency_links.txt
+src/max2tg.egg-info/entry_points.txt
+src/max2tg.egg-info/requires.txt
+src/max2tg.egg-info/top_level.txt
