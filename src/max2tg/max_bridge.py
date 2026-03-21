@@ -48,7 +48,7 @@ class MaxBridge:
             client = self._make_client(s)
             self._clients[s["phone"]] = client
             task = asyncio.create_task(
-                self._run_client(s["phone"], client), name=f"max-{s['phone']}"
+                self._run_client(s["phone"], client, s.get("telegram_id")), name=f"max-{s['phone']}"
             )
             self._tasks.append(task)
 
@@ -90,13 +90,23 @@ class MaxBridge:
 
     # ── run loop ──────────────────────────────────────────────────────────────
 
-    async def _run_client(self, phone: str, client: SocketMaxClient) -> None:
+    async def _run_client(self, phone: str, client: SocketMaxClient, telegram_id: int | None = None) -> None:
         if client._token is None:
             log.warning(
                 "No auth token for %s — not starting client automatically. "
                 "Use /login %s to authenticate via Telegram.",
                 phone, phone,
             )
+            if telegram_id:
+                try:
+                    await self._bot.send_message(
+                        telegram_id,
+                        f"⚠️ Сессия Max <code>{phone}</code> разлогинилась и требует повторной авторизации.\n"
+                        f"Используй /login {phone} чтобы войти снова.",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    log.exception("Failed to notify tg_user=%s about session logout", telegram_id)
             return
 
         @client.on_message()
@@ -396,7 +406,7 @@ class MaxBridge:
         client = self._make_client(session)
         self._clients[phone] = client
         task = asyncio.create_task(
-            self._run_client(phone, client), name=f"max-{phone}"
+            self._run_client(phone, client, session.get("telegram_id")), name=f"max-{phone}"
         )
         self._tasks.append(task)
         log.info("Started new session for %s", phone)
