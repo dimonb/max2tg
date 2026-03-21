@@ -163,7 +163,15 @@ class MaxBridge:
             return thread_id
 
         title = await self._get_dialog_title(client, max_chat_id, sender_id)
-        topic = await self._bot.create_forum_topic(tg_chat_id, title[:128])
+        try:
+            topic = await self._bot.create_forum_topic(tg_chat_id, title[:128])
+        except Exception as e:
+            log.error(
+                "Failed to create topic '%s' in tg_chat=%d: %s. "
+                "Make sure the group has Topics enabled and the bot is admin with Manage Topics.",
+                title, tg_chat_id, e,
+            )
+            raise
         thread_id = topic.message_thread_id
         await db.upsert_topic(tg_chat_id, thread_id, max_chat_id, phone, title)
         log.info("Created topic %d '%s' for Max chat %d", thread_id, title, max_chat_id)

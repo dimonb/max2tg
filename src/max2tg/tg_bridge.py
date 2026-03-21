@@ -140,6 +140,23 @@ async def cmd_pin(
         return
 
     tg_chat_id = message.chat.id
+
+    # Verify the group has Topics enabled and the bot is admin with manage_topics permission.
+    bot: Bot = message.bot  # type: ignore[assignment]
+    try:
+        chat = await bot.get_chat(tg_chat_id)
+        if not getattr(chat, "is_forum", False):
+            await message.reply("❌ This group does not have Topics enabled.\nEnable Topics in Group Settings → Topics, then retry.")
+            return
+        me = await bot.get_me()
+        member = await bot.get_chat_member(tg_chat_id, me.id)
+        if not getattr(member, "can_manage_topics", False):
+            await message.reply("❌ The bot is not an admin with Manage Topics permission.\nGrant that permission and retry.")
+            return
+    except Exception as e:
+        await message.reply(f"❌ Could not verify bot permissions: {e}")
+        return
+
     await db.set_pin(tg_chat_id, phone)
     name = sessions[phone].get("name", phone)
     await message.reply(
@@ -237,9 +254,14 @@ async def cmd_send(
     for tg_chat_id in tg_chat_ids:
         thread_id = await db.get_topic_by_max(tg_chat_id, max_chat_id, phone)
         if thread_id is None:
-            topic = await message.bot.create_forum_topic(tg_chat_id, contact_phone)
+            client = max_bridge._clients.get(phone)
+            title = (
+                await max_bridge._get_dialog_title(client, max_chat_id)
+                if client else contact_phone
+            )
+            topic = await message.bot.create_forum_topic(tg_chat_id, title[:128])
             thread_id = topic.message_thread_id
-            await db.upsert_topic(tg_chat_id, thread_id, max_chat_id, phone, contact_phone)
+            await db.upsert_topic(tg_chat_id, thread_id, max_chat_id, phone, title)
         await db.save_message(tg_chat_id, thread_id, message.message_id, max_chat_id, max_msg_id, phone)
         topic_links.append(f"https://t.me/c/{str(tg_chat_id).lstrip('-100')}/{thread_id}")
 

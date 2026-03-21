@@ -25,13 +25,18 @@ def test_is_allowed_empty_whitelist():
 @pytest.mark.asyncio
 async def test_pin_command_success(db):
     from max2tg.tg_bridge import cmd_pin
-    from aiogram.types import Message, User, Chat
 
-    message = MagicMock(spec=Message)
+    bot = AsyncMock()
+    bot.get_chat = AsyncMock(return_value=MagicMock(is_forum=True))
+    bot.get_me = AsyncMock(return_value=MagicMock(id=999))
+    bot.get_chat_member = AsyncMock(return_value=MagicMock(can_manage_topics=True))
+
+    message = MagicMock()
     message.text = "/pin +79001234567"
     message.chat = MagicMock(id=-100123)
     message.from_user = MagicMock(id=35243507)
     message.reply = AsyncMock()
+    message.bot = bot
 
     sessions = {"+79001234567": {"phone": "+79001234567", "name": "Dmitrii"}}
     whitelist = {35243507}
@@ -242,6 +247,7 @@ async def test_cmd_send_uses_pinned_session(db):
 
     max_bridge = MagicMock()
     max_bridge.send_by_phone = AsyncMock(return_value=(42, 1001))
+    max_bridge._get_dialog_title = AsyncMock(return_value="Test Contact")
 
     message = MagicMock()
     message.text = "/send +79001234567 Hi"
