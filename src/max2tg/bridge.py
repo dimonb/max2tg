@@ -79,7 +79,7 @@ async def main() -> None:
     webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL") or tg_cfg.get("webhook_url")
 
     # message_reaction must be explicitly requested (not sent by default)
-    allowed_updates = dp.resolve_used_update_types() | {"message_reaction"}
+    allowed_updates = set(dp.resolve_used_update_types()) | {"message_reaction"}
 
     async with asyncio.TaskGroup() as tg:
         tg.create_task(max_bridge.start(), name="max-bridge")
