@@ -411,6 +411,34 @@ class MaxBridge:
         self._tasks.append(task)
         log.info("Started new session for %s", phone)
 
+    async def join_chat(self, phone: str, link: str) -> tuple[str, int]:
+        """Join a Max group or channel by invite link. Returns (title, max_chat_id)."""
+        client = self._clients.get(phone)
+        if not client:
+            raise RuntimeError(f"No active client for {phone}")
+
+        # Normalise: bare token like "AbCdEf" → full join URL
+        if not link.startswith("http") and "join/" not in link:
+            link = f"https://max.ru/join/{link}"
+
+        # Try group first, then channel
+        try:
+            chat = await client.join_group(link)
+            title = chat.title or str(chat.id_)
+            log.info("Joined group '%s' (id=%d) via %s", title, chat.id_, phone)
+            return title, chat.id_
+        except Exception as group_err:
+            log.debug("join_group failed (%s), trying join_channel", group_err)
+
+        try:
+            channel = await client.join_channel(link)
+            title = getattr(channel, "title", None) or str(getattr(channel, "id", link))
+            chat_id = getattr(channel, "id", 0)
+            log.info("Joined channel '%s' (id=%d) via %s", title, chat_id, phone)
+            return title, chat_id
+        except Exception as channel_err:
+            raise RuntimeError(f"Could not join: {channel_err}") from channel_err
+
     async def remove_session(self, phone: str) -> None:
         """Stop and remove a Max client."""
         client = self._clients.pop(phone, None)

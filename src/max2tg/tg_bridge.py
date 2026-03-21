@@ -24,6 +24,7 @@ BOT_COMMANDS = [
     BotCommand(command="pin",    description="Pin this group to a Max session: /pin <phone>"),
     BotCommand(command="unpin",  description="Remove pin from this group"),
     BotCommand(command="send",   description="Send a message by phone: /send <phone> <text>"),
+    BotCommand(command="join",   description="Join Max chat by invite link: /join <link>"),
     BotCommand(command="login",  description="Add Max session: /login <phone> [name]"),
     BotCommand(command="logout", description="Remove Max session: /logout <phone>"),
 ]
@@ -78,6 +79,7 @@ This bot mirrors conversations between <b>Max messenger</b> and <b>Telegram foru
 /unpin — remove the link from this group
 /send &lt;phone&gt; &lt;text&gt; — find a Max user by phone and send them a message
   With multiple sessions: <code>/send &lt;session&gt; &lt;phone&gt; &lt;text&gt;</code>
+/join &lt;link&gt; — join a Max group/channel by invite link or token
 /login &lt;phone&gt; [name] — add a new Max session (sends OTP to phone)
 /logout &lt;phone&gt; — remove a Max session
 /start — show this message
@@ -270,6 +272,64 @@ async def cmd_send(
         reply += f"\nTopic: {topic_links[0]}"
     await message.reply(reply)
     log.info("Sent to %s via %s, max_chat_id=%d", contact_phone, phone, max_chat_id)
+
+
+# ── /join ─────────────────────────────────────────────────────────────────────
+
+@router.message(Command("join"))
+async def cmd_join(
+    message: Message,
+    whitelist: set[int],
+    sessions: dict[str, dict],
+    max_bridge: "MaxBridge",
+) -> None:
+    if not _check_allowed(message, whitelist):
+        return
+
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply(
+            "Usage: <code>/join &lt;link_or_token&gt;</code>\n"
+            "Examples:\n"
+            "  <code>/join https://max.ru/join/AbCdEf</code>\n"
+            "  <code>/join AbCdEf</code>"
+        )
+        return
+
+    link = args[1].strip()
+
+    # Resolve session: pinned group → single active → error
+    phone: str | None = None
+    pinned = await db.get_pin(message.chat.id)
+    if pinned and pinned in sessions:
+        phone = pinned
+    else:
+        active = max_bridge.active_phones()
+        if not active:
+            await message.reply("No active Max sessions.")
+            return
+        if len(active) > 1:
+            phones_list = "\n".join(f"  <code>{p}</code>" for p in active)
+            await message.reply(
+                f"Multiple sessions active. Run /join from a pinned group, or specify the session:\n{phones_list}"
+            )
+            return
+        phone = active[0]
+
+    await message.reply(f"Joining <code>{link}</code> via <code>{phone}</code>…")
+    try:
+        title, max_chat_id = await max_bridge.join_chat(phone, link)
+    except Exception as e:
+        await message.reply(f"❌ Failed to join: {e}")
+        log.exception("join_chat failed for %s link=%s", phone, link)
+        return
+
+    log.info("Joined Max chat '%s' (id=%d) via %s", title, max_chat_id, phone)
+    await message.reply(
+        f"✅ Joined <b>{title}</b>\n"
+        f"Max chat id: <code>{max_chat_id}</code>\n"
+        "Messages will appear as a topic when the first message arrives."
+    )
 
 
 # ── /login ────────────────────────────────────────────────────────────────────
