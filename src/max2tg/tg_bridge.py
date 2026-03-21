@@ -354,7 +354,7 @@ async def cmd_login(
     phone = args[1].strip()
     name = args[2].strip() if len(args) > 2 else phone
 
-    if phone in sessions:
+    if phone in max_bridge.active_phones():
         await message.reply(f"Session <code>{phone}</code> is already active.")
         return
 

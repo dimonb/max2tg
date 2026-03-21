@@ -97,6 +97,7 @@ class MaxBridge:
                 "Use /login %s to authenticate via Telegram.",
                 phone, phone,
             )
+            self._clients.pop(phone, None)
             if telegram_id:
                 try:
                     await self._bot.send_message(
