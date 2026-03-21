@@ -20,6 +20,7 @@ from pymax.types import (
     ContactAttach,
     FileAttach,
     PhotoAttach,
+    ReactionInfo,
     StickerAttach,
     VideoAttach,
 )
@@ -117,6 +118,13 @@ class MaxBridge:
             except Exception:
                 log.exception("Error forwarding message from %s", phone)
 
+        @client.on_reaction_change()
+        async def on_reaction(message_id: str, chat_id: int, reaction_info: ReactionInfo) -> None:
+            try:
+                await self._forward_reaction_to_tg(phone, chat_id, message_id, reaction_info)
+            except Exception:
+                log.exception("Error forwarding reaction from %s", phone)
+
         try:
             await client.start()
         except asyncio.CancelledError:
@@ -182,8 +190,9 @@ class MaxBridge:
             return thread_id
 
         title = await self._get_dialog_title(client, max_chat_id, sender_id)
+        icon_color = self._topic_color(client, max_chat_id)
         try:
-            topic = await self._bot.create_forum_topic(tg_chat_id, title[:128])
+            topic = await self._bot.create_forum_topic(tg_chat_id, title[:128], icon_color=icon_color)
         except Exception as e:
             log.error(
                 "Failed to create topic '%s' in tg_chat=%d: %s. "
@@ -290,6 +299,17 @@ class MaxBridge:
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
+    def _topic_color(self, client: SocketMaxClient, max_chat_id: int) -> int:
+        """Return a Telegram forum-topic icon color based on Max chat type."""
+        # 0x6FB9F0 blue   – channel
+        # 0x8EEE98 green  – group
+        # 0xFFD67E yellow – 1:1 dialog
+        if any(c.id == max_chat_id for c in (client.channels or [])):
+            return 0x6FB9F0
+        if any(c.id == max_chat_id for c in (client.chats or [])):
+            return 0x8EEE98
+        return 0xFFD67E
+
     async def _get_sender_name(self, client: SocketMaxClient, msg: Message) -> str:
         if not msg.sender:
             return ""
@@ -338,6 +358,67 @@ class MaxBridge:
             async with session.get(url) as r:
                 r.raise_for_status()
                 return await r.read()
+
+    # Telegram reaction emoji must not contain variation selectors (U+FE0F, U+FE0E)
+    _VARIATION_SELECTORS = str.maketrans("", "", "\ufe0f\ufe0e")
+
+    def _to_tg_emoji(self, emoji: str) -> str:
+        """Strip Unicode variation selectors so the emoji matches Telegram's reaction list."""
+        return emoji.translate(self._VARIATION_SELECTORS)
+
+    async def _forward_reaction_to_tg(
+        self, phone: str, max_chat_id: int, max_message_id_str: str, reaction_info: ReactionInfo
+    ) -> None:
+        from aiogram.types import ReactionTypeEmoji
+
+        try:
+            max_message_id = int(max_message_id_str)
+        except ValueError:
+            return
+
+        tg_chat_ids = await db.get_pins_by_phone(phone)
+        for tg_chat_id in tg_chat_ids:
+            row = await db.get_tg_message_id(phone, max_chat_id, max_message_id)
+            if not row:
+                continue
+            _, tg_message_id = row
+
+            # pick the most popular reaction; empty counters → clear bot reaction
+            counters = reaction_info.counters or []
+            if counters:
+                top = max(counters, key=lambda c: c.count)
+                reaction = [ReactionTypeEmoji(emoji=self._to_tg_emoji(top.reaction))]
+            else:
+                reaction = []
+
+            try:
+                await self._bot.set_message_reaction(
+                    chat_id=tg_chat_id,
+                    message_id=tg_message_id,
+                    reaction=reaction,
+                )
+            except Exception:
+                if reaction:
+                    # emoji not supported by Telegram — fall back to 👍
+                    try:
+                        await self._bot.set_message_reaction(
+                            chat_id=tg_chat_id,
+                            message_id=tg_message_id,
+                            reaction=[ReactionTypeEmoji(emoji="👍")],
+                        )
+                        log.info(
+                            "Max→TG reaction: unsupported %r → using 👍 on tg_msg=%d",
+                            reaction[0].emoji, tg_message_id,
+                        )
+                        continue
+                    except Exception:
+                        pass
+                log.exception("Failed to set TG reaction on message %d", tg_message_id)
+                continue
+            log.info(
+                "Max→TG reaction: %s on max_msg=%s → tg_msg=%d",
+                reaction_info.counters, max_message_id, tg_message_id,
+            )
 
     # ── TG → Max ──────────────────────────────────────────────────────────────
 
@@ -399,6 +480,23 @@ class MaxBridge:
         if not sent:
             return None
         return chat_id, sent.id
+
+    async def set_reaction(
+        self,
+        phone: str,
+        max_chat_id: int,
+        max_message_id: int,
+        emoji: str | None,
+    ) -> None:
+        """Add or remove a reaction on a Max message. emoji=None removes the reaction."""
+        client = self._clients.get(phone)
+        if not client:
+            log.warning("No active client for phone %s", phone)
+            return
+        if emoji:
+            await client.add_reaction(max_chat_id, str(max_message_id), emoji)
+        else:
+            await client.remove_reaction(max_chat_id, str(max_message_id))
 
     def active_phones(self) -> list[str]:
         """Return phones of currently connected clients."""

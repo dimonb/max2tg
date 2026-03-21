@@ -78,15 +78,25 @@ async def main() -> None:
 
     webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL") or tg_cfg.get("webhook_url")
 
+    # message_reaction must be explicitly requested (not sent by default)
+    allowed_updates = dp.resolve_used_update_types() | {"message_reaction"}
+
     async with asyncio.TaskGroup() as tg:
         tg.create_task(max_bridge.start(), name="max-bridge")
         if webhook_url:
-            tg.create_task(_run_webhook(bot, dp, webhook_url, tg_cfg), name="tg-webhook")
+            tg.create_task(
+                _run_webhook(bot, dp, webhook_url, tg_cfg, allowed_updates), name="tg-webhook"
+            )
         else:
-            tg.create_task(dp.start_polling(bot, handle_signals=False), name="tg-polling")
+            tg.create_task(
+                dp.start_polling(bot, handle_signals=False, allowed_updates=allowed_updates),
+                name="tg-polling",
+            )
 
 
-async def _run_webhook(bot: Bot, dp: Dispatcher, webhook_url: str, tg_cfg: dict) -> None:
+async def _run_webhook(
+    bot: Bot, dp: Dispatcher, webhook_url: str, tg_cfg: dict, allowed_updates: set[str]
+) -> None:
     from aiohttp import web
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -106,7 +116,12 @@ async def _run_webhook(bot: Bot, dp: Dispatcher, webhook_url: str, tg_cfg: dict)
     )
 
     full_url = webhook_url.rstrip("/") + path
-    await bot.set_webhook(url=full_url, secret_token=secret, drop_pending_updates=False)
+    await bot.set_webhook(
+        url=full_url,
+        secret_token=secret,
+        drop_pending_updates=False,
+        allowed_updates=list(allowed_updates),
+    )
     log.info("Webhook set to %s (listening on %s:%d)", full_url, host, port)
 
     app = web.Application()

@@ -246,7 +246,7 @@ async def test_forward_to_tg_creates_topic_and_sends(db):
 
     await bridge._forward_to_tg("+7900", client, msg)
 
-    bot.create_forum_topic.assert_awaited_once_with(-100, "42")
+    bot.create_forum_topic.assert_awaited_once_with(-100, "42", icon_color=0xFFD67E)
     bot.send_message.assert_awaited_once()
 
     # verify mapping saved

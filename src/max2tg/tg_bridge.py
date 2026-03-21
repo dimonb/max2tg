@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
-from aiogram.types import BotCommand, Message
+from aiogram.types import BotCommand, Message, MessageReactionUpdated, ReactionTypeEmoji
 
 from . import db
 
@@ -570,6 +570,41 @@ async def handle_topic_message(
             max_message_id=max_msg_id,
             phone=phone,
         )
+
+
+# ── TG reactions → Max ────────────────────────────────────────────────────────
+
+@router.message_reaction()
+async def handle_reaction(
+    reaction: MessageReactionUpdated,
+    whitelist: set[int],
+    max_bridge: "MaxBridge",
+) -> None:
+    user = reaction.user
+    if not user or not is_allowed(user.id, whitelist):
+        return
+
+    row = await db.get_max_message_id(reaction.chat.id, reaction.message_id)
+    if not row:
+        return
+
+    max_chat_id, max_message_id, phone = row
+
+    # Determine the new emoji (first standard emoji reaction), or None if cleared
+    emoji: str | None = None
+    for r in (reaction.new_reaction or []):
+        if isinstance(r, ReactionTypeEmoji):
+            emoji = r.emoji
+            break
+
+    log.info(
+        "TG→Max reaction: user=%d tg_msg=%d → max_msg=%d emoji=%s",
+        user.id, reaction.message_id, max_message_id, emoji,
+    )
+    try:
+        await max_bridge.set_reaction(phone, max_chat_id, max_message_id, emoji)
+    except Exception:
+        log.exception("Failed to forward TG reaction to Max")
 
 
 async def _download_tg(bot: Bot, file_id: str) -> bytes:
