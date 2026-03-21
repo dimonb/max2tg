@@ -310,7 +310,13 @@ class MaxBridge:
                 return (n.name or f"{n.first_name or ''} {n.last_name or ''}").strip() or None
             return None
 
-        # 1. Try dialog participant list (populated at sync time)
+        # 1. Groups and channels have a .title attribute directly
+        for collection in (client.chats or [], client.channels or []):
+            chat = next((c for c in collection if c.id == max_chat_id), None)
+            if chat and chat.title:
+                return chat.title
+
+        # 2. Try dialog participant list (1:1 chats)
         dialog = next((d for d in (client.dialogs or []) if d.id == max_chat_id), None)
         if dialog:
             others = [uid for uid in dialog.participants.values() if uid != dialog.owner]
@@ -319,7 +325,7 @@ class MaxBridge:
                 if title:
                     return title
 
-        # 2. Fallback: sender of the incoming message (new chat not yet in dialogs)
+        # 3. Fallback: sender of the incoming message (new chat not yet in dialogs)
         if sender_id and client.me and sender_id != client.me.id:
             title = _name(await client.get_user(sender_id))
             if title:
