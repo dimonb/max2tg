@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 from pathlib import Path
 
 import yaml
@@ -21,7 +23,17 @@ CONFIG_FILE = Path("config.yaml")
 
 
 def load_config() -> dict:
-    return yaml.safe_load(CONFIG_FILE.read_text())
+    def _expand(m: re.Match) -> str:
+        var, _, default = m.group(1).partition(":-")
+        value = os.environ.get(var)
+        if value is None:
+            if default:
+                return default
+            raise RuntimeError(f"Environment variable ${{{var}}} is not set")
+        return value
+
+    text = re.sub(r"\$\{([^}]+)\}", _expand, CONFIG_FILE.read_text())
+    return yaml.safe_load(text)
 
 
 async def main() -> None:
