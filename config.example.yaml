@@ -3,8 +3,12 @@ debug: false              # true → DEBUG logging for max2tg.* and pymax.*
 
 telegram:
   bot_token: "${TG_BOT_TOKEN}"
-  whitelist:
-    - 35243507            # Telegram user_ids allowed to interact with the bot
+  # whitelist accepts a YAML list or an env var expanding to one:
+  #   export TG_WHITELIST="[35243507, 12345678]"
+  whitelist: ${TG_WHITELIST}
+  # or hardcoded:
+  # whitelist:
+  #   - 35243507
 
   # ── Webhook (optional) ────────────────────────────────────────────────────
   # If omitted (or TELEGRAM_WEBHOOK_URL not set), polling is used instead.
