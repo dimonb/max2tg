@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+_SEND_WAIT_TIMEOUT = 30  # seconds to wait for client connection before dropping
+
+
 class MaxBridge:
     def __init__(self, sessions: list[dict], work_dir: str, bot: "Bot") -> None:
         self._sessions = sessions
@@ -41,6 +44,18 @@ class MaxBridge:
         self._bot = bot
         self._clients: dict[str, SocketMaxClient] = {}
         self._tasks: list[asyncio.Task] = []
+        self._ready: dict[str, asyncio.Event] = {}
+        self._send_lock: dict[str, asyncio.Lock] = {}
+
+    def _get_ready(self, phone: str) -> asyncio.Event:
+        if phone not in self._ready:
+            self._ready[phone] = asyncio.Event()
+        return self._ready[phone]
+
+    def _get_send_lock(self, phone: str) -> asyncio.Lock:
+        if phone not in self._send_lock:
+            self._send_lock[phone] = asyncio.Lock()
+        return self._send_lock[phone]
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
@@ -125,12 +140,19 @@ class MaxBridge:
             except Exception:
                 log.exception("Error forwarding reaction from %s", phone)
 
+        @client.on_start
+        async def on_started() -> None:
+            self._get_ready(phone).set()
+            log.info("Max client %s connected and ready", phone)
+
         try:
             await client.start()
         except asyncio.CancelledError:
             pass
         except Exception:
             log.exception("Max client %s crashed", phone)
+        finally:
+            self._get_ready(phone).clear()
 
     # ── Max → TG ──────────────────────────────────────────────────────────────
 
@@ -422,6 +444,18 @@ class MaxBridge:
 
     # ── TG → Max ──────────────────────────────────────────────────────────────
 
+    async def _wait_ready(self, phone: str) -> bool:
+        """Wait until the client for *phone* is connected. Returns False on timeout."""
+        ready = self._get_ready(phone)
+        if not ready.is_set():
+            log.info("Waiting up to %ds for %s to connect before sending…", _SEND_WAIT_TIMEOUT, phone)
+            try:
+                await asyncio.wait_for(ready.wait(), timeout=_SEND_WAIT_TIMEOUT)
+            except asyncio.TimeoutError:
+                log.warning("Client %s not ready after %ds — dropping event", phone, _SEND_WAIT_TIMEOUT)
+                return False
+        return True
+
     async def send_to_max(
         self,
         phone: str,
@@ -441,27 +475,31 @@ class MaxBridge:
             log.warning("No active client for phone %s", phone)
             return None
 
-        attach = None
-        if photo_bytes:
-            # Photo/Video/File require url or path for file_name; raw overrides download
-            attach = Photo(raw=photo_bytes, url=f"https://x/{photo_name}")
-        elif video_bytes:
-            # Video requires url/path for file_name; raw is used by read()
-            attach = Video(raw=video_bytes, url=f"https://x/{video_name}")
-        elif file_bytes:
-            attach = File(raw=file_bytes, url=f"https://x/{file_name}")
+        async with self._get_send_lock(phone):
+            if not await self._wait_ready(phone):
+                return None
 
-        if not text and not attach:
-            log.debug("send_to_max: skipping — no text and no attachment")
-            return None
+            attach = None
+            if photo_bytes:
+                # Photo/Video/File require url or path for file_name; raw overrides download
+                attach = Photo(raw=photo_bytes, url=f"https://x/{photo_name}")
+            elif video_bytes:
+                # Video requires url/path for file_name; raw is used by read()
+                attach = Video(raw=video_bytes, url=f"https://x/{video_name}")
+            elif file_bytes:
+                attach = File(raw=file_bytes, url=f"https://x/{file_name}")
 
-        sent = await client.send_message(
-            text=text or "",
-            chat_id=max_chat_id,
-            attachment=attach,
-            reply_to=reply_to_max_id,
-        )
-        return sent.id if sent else None
+            if not text and not attach:
+                log.debug("send_to_max: skipping — no text and no attachment")
+                return None
+
+            sent = await client.send_message(
+                text=text or "",
+                chat_id=max_chat_id,
+                attachment=attach,
+                reply_to=reply_to_max_id,
+            )
+            return sent.id if sent else None
 
     async def send_by_phone(
         self,
@@ -493,10 +531,13 @@ class MaxBridge:
         if not client:
             log.warning("No active client for phone %s", phone)
             return
-        if emoji:
-            await client.add_reaction(max_chat_id, str(max_message_id), emoji)
-        else:
-            await client.remove_reaction(max_chat_id, str(max_message_id))
+        async with self._get_send_lock(phone):
+            if not await self._wait_ready(phone):
+                return
+            if emoji:
+                await client.add_reaction(max_chat_id, str(max_message_id), emoji)
+            else:
+                await client.remove_reaction(max_chat_id, str(max_message_id))
 
     def active_phones(self) -> list[str]:
         """Return phones of currently connected clients."""
