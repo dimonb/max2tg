@@ -101,8 +101,8 @@ class MaxBridge:
                 try:
                     await self._bot.send_message(
                         telegram_id,
-                        f"⚠️ Сессия Max <code>{phone}</code> разлогинилась и требует повторной авторизации.\n"
-                        f"Используй /login {phone} чтобы войти снова.",
+                        f"⚠️ Max session <code>{phone}</code> was logged out and requires re-authentication.\n"
+                        f"Use /login {phone} to log in again.",
                         parse_mode="HTML",
                     )
                 except Exception:
