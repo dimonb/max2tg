@@ -249,14 +249,35 @@ class MaxBridge:
         attaches = msg.attaches or []
         if attaches:
             # send first attach with caption=text, rest without
-            first = await self._send_attach(attaches[0], text, msg, client, kwargs)
+            first = await self._safe_send_attach(attaches[0], text, msg, client, kwargs)
             for attach in attaches[1:]:
-                await self._send_attach(attach, None, msg, client, kwargs)
+                await self._safe_send_attach(attach, None, msg, client, kwargs)
+            # If the caption-bearing attach failed, don't lose the text silently.
+            if first is None and text.strip():
+                return await self._bot.send_message(**kwargs, text=text)
             return first
 
         if text.strip():
             return await self._bot.send_message(**kwargs, text=text)
         return None
+
+    async def _safe_send_attach(
+        self,
+        attach: Any,
+        caption: str | None,
+        msg: Message,
+        client: SocketMaxClient,
+        kwargs: dict,
+    ) -> Any:
+        """Send one attach, isolating failures so one bad attach can't drop the rest."""
+        try:
+            return await self._send_attach(attach, caption, msg, client, kwargs)
+        except Exception:
+            log.exception(
+                "Failed to send %s from max_chat=%s msg_id=%s",
+                type(attach).__name__, msg.chat_id, msg.id,
+            )
+            return None
 
     async def _send_attach(
         self,
@@ -266,16 +287,34 @@ class MaxBridge:
         client: SocketMaxClient,
         kwargs: dict,
     ) -> Any:
+        from aiogram.exceptions import TelegramBadRequest
         from aiogram.types import BufferedInputFile
 
         bot = self._bot
         cap = caption or ""
 
         if isinstance(attach, PhotoAttach):
+            if not attach.base_url:
+                log.warning(
+                    "PhotoAttach without base_url (photo_id=%s) in max_chat=%s — sending caption only",
+                    attach.photo_id, msg.chat_id,
+                )
+                return await bot.send_message(**kwargs, text=cap) if cap else None
             data = await self._download(attach.base_url)
-            return await bot.send_photo(
-                **kwargs, photo=BufferedInputFile(data, "photo.jpg"), caption=cap or None
-            )
+            try:
+                return await bot.send_photo(
+                    **kwargs, photo=BufferedInputFile(data, "photo.jpg"), caption=cap or None
+                )
+            except TelegramBadRequest as e:
+                # Telegram rejects photos > 10 MB or with width+height > 10000 / ratio > 20.
+                # Re-send the same bytes as a document so the image still gets through.
+                log.warning(
+                    "send_photo rejected (%s); retrying as document. photo_id=%s %dx%d bytes=%d url=%s",
+                    e, attach.photo_id, attach.width, attach.height, len(data), attach.base_url,
+                )
+                return await bot.send_document(
+                    **kwargs, document=BufferedInputFile(data, "photo.jpg"), caption=cap or None
+                )
 
         if isinstance(attach, VideoAttach):
             vr = await client.get_video_by_id(msg.chat_id, msg.id, attach.video_id) if msg.id else None

@@ -305,3 +305,60 @@ async def test_forward_to_tg_with_reply(db):
 
     call_kwargs = bot.send_message.call_args.kwargs
     assert call_kwargs["reply_parameters"].message_id == 555
+
+
+# ── _send_attach: photo robustness ─────────────────────────────────────────────
+
+def _photo_attach(base_url="https://cdn/photo", width=12000, height=12000):
+    from pymax.types import PhotoAttach
+    return PhotoAttach(
+        base_url=base_url, height=height, width=width, photo_id=7,
+        photo_token="t", preview_data=None, type=MagicMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_attach_photo_falls_back_to_document_on_bad_request():
+    from aiogram.exceptions import TelegramBadRequest
+
+    bot = AsyncMock()
+    bot.send_photo = AsyncMock(
+        side_effect=TelegramBadRequest(method=MagicMock(), message="PHOTO_INVALID_DIMENSIONS")
+    )
+    bot.send_document = AsyncMock(return_value=MagicMock(message_id=321))
+
+    bridge = make_bridge(bot=bot)
+    bridge._download = AsyncMock(return_value=b"\xff\xd8\xff")
+    msg = MagicMock(chat_id=42, id=100)
+
+    result = await bridge._send_attach(_photo_attach(), "cap", msg, AsyncMock(), {"chat_id": -100})
+
+    assert result.message_id == 321
+    bot.send_photo.assert_awaited_once()
+    bot.send_document.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_attach_photo_without_base_url_sends_caption_only():
+    bot = AsyncMock()
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=9))
+    bridge = make_bridge(bot=bot)
+    bridge._download = AsyncMock()
+    msg = MagicMock(chat_id=42, id=100)
+
+    result = await bridge._send_attach(_photo_attach(base_url=""), "cap", msg, AsyncMock(), {"chat_id": -100})
+
+    assert result.message_id == 9
+    bridge._download.assert_not_awaited()
+    bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_safe_send_attach_swallows_failure_and_returns_none():
+    bridge = make_bridge()
+    bridge._send_attach = AsyncMock(side_effect=RuntimeError("boom"))
+    msg = MagicMock(chat_id=42, id=100)
+
+    result = await bridge._safe_send_attach(_photo_attach(), "cap", msg, AsyncMock(), {})
+
+    assert result is None

@@ -49,8 +49,11 @@ async def main() -> None:
         # third-party libs are very noisy at DEBUG; keep them at INFO unless wanted
         for noisy in ("aiogram", "aiosqlite", "aiohttp", "asyncio"):
             logging.getLogger(noisy).setLevel(logging.INFO)
-        # enable pymax debug to diagnose sync/login issues
+        # enable pymax debug to diagnose sync/login issues...
         logging.getLogger("pymax").setLevel(logging.DEBUG)
+        # ...but silence pymax.core, which dumps every PING frame and socket
+        # timeout (~1 line/sec) and otherwise rotates real events out of the log.
+        logging.getLogger("pymax.core").setLevel(logging.INFO)
     bot_token: str = tg_cfg["bot_token"]
     whitelist: list[int] = tg_cfg.get("whitelist", [])
     sessions: list[dict] = cfg.get("sessions", [])
